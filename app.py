@@ -7,9 +7,9 @@ import telegram
 
 app = Flask(__name__)
 
-TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ["GROUP_CHAT_ID"]
-RSS_URL = os.environ["PINTEREST_RSS"]  # одна доска для всех случаев
+TOKEN = os.environ["8669086142:AAGA3jHJH4MKSYuE0nd5r_fQtFzQe5aV8Wo"]
+CHAT_ID = os.environ["-1002954048784"]
+RSS_URL = os.environ["https://rss.app/feeds/CrY18qZKdaSgVifc.xml"]  # одна доска для всех случаев
 
 # Если позже захотите разные доски, можно добавить:
 # MORNING_RSS = os.environ.get("MORNING_RSS", RSS_URL)
