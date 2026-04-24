@@ -2,42 +2,66 @@ import os
 import random
 import traceback
 import requests
-from flask import Flask, request
+from flask import Flask
 import feedparser
 import telegram
 
 app = Flask(__name__)
 
-# Переменные окружения (должны быть заданы на Render)
 TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("GROUP_CHAT_ID")
 RSS_URL = os.environ.get("PINTEREST_RSS")
 
-# Простая проверка, чтобы сразу увидеть проблему, если переменные не заданы
 if not TOKEN or not CHAT_ID or not RSS_URL:
     raise RuntimeError("Не задана одна из переменных окружения: BOT_TOKEN, GROUP_CHAT_ID, PINTEREST_RSS")
 
 bot = telegram.Bot(token=TOKEN)
 
 def get_random_pinterest_image(rss_url):
-    """Парсим RSS и возвращаем URL случайной картинки."""
+    """Парсим RSS от RSS.app и возвращаем URL случайной картинки."""
     feed = feedparser.parse(rss_url)
     images = []
-    # Иногда feedparser возвращает ошибку, это нормально, но картинок может не быть
-    if feed.entries:
-        for entry in feed.entries:
-            if "description" in entry and "img src" in entry.description:
-                start = entry.description.find('src="') + 5
-                end = entry.description.find('"', start)
-                if start > 4 and end > 0:
-                    img_url = entry.description[start:end]
+
+    if not feed.entries:
+        raise Exception("RSS-лента пуста или недоступна. Проверьте ссылку.")
+
+    for entry in feed.entries:
+        # Способ 1: media_content (основной для RSS.app)
+        if hasattr(entry, 'media_content') and entry.media_content:
+            for media in entry.media_content:
+                url = media.get('url')
+                if url and url.startswith('http'):
+                    images.append(url)
+                    break  # берём только первую картинку из media_content
+
+        # Если в media_content не нашли — пробуем enclosures
+        if not images and hasattr(entry, 'enclosures') and entry.enclosures:
+            for enc in entry.enclosures:
+                href = enc.get('href') or enc.get('url')
+                if href and href.startswith('http'):
+                    images.append(href)
+                    break
+
+        # Способ 3: старый поиск в description (на всякий случай)
+        if not images and 'description' in entry:
+            desc = entry.description
+            start = desc.find('src="')
+            if start != -1:
+                start += 5
+                end = desc.find('"', start)
+                if end > 0:
+                    img_url = desc[start:end]
                     images.append(img_url)
+
     if not images:
-        raise Exception("Не удалось найти изображения в RSS-ленте. Проверьте ссылку и парсинг.")
+        raise Exception(
+            "Не удалось найти изображения в RSS-ленте. "
+            "Возможно, лента не содержит картинок или изменилась структура. "
+            "Проверьте RSS-ссылку."
+        )
     return random.choice(images)
 
 def send_greeting(caption):
-    """Получает случайную картинку и отправляет в чат."""
     img_url = get_random_pinterest_image(RSS_URL)
     bot.send_photo(chat_id=CHAT_ID, photo=img_url, caption=caption)
 
@@ -47,7 +71,6 @@ def morning():
         send_greeting("Доброе утро! 🌅")
         return "Утро отправлено", 200
     except Exception as e:
-        # Возвращаем traceback, чтобы увидеть ошибку прямо в браузере
         return f"<pre>{traceback.format_exc()}</pre>", 500
 
 @app.route("/afternoon")
