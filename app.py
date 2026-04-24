@@ -46,7 +46,7 @@ try:
     }
 
     def get_random_pinterest_image(rss_url):
-        # Скачиваем RSS через requests с нормальным User-Agent
+        # Скачиваем RSS через requests с правильным User-Agent
         session = requests.Session()
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -122,13 +122,25 @@ try:
             return "Вечер отправлен", 200
         except Exception as e:
             return f"<pre>{traceback.format_exc()}</pre>", 500
-@app.route("/test")
-def test():
-    try:
-        bot.send_message(chat_id=CHAT_ID, text="Тест: бот работает!")
-        return "Тестовое сообщение отправлено", 200
-    except Exception as e:
-        return f"<pre>{traceback.format_exc()}</pre>", 500
+
+    @app.route("/test")
+    def test():
+        try:
+            bot.send_message(chat_id=CHAT_ID, text="Тест: бот работает!")
+            return "Тестовое сообщение отправлено", 200
+        except Exception as e:
+            return f"<pre>{traceback.format_exc()}</pre>", 500
+
+    @app.route("/testphoto")
+    def testphoto():
+        try:
+            # Прямая ссылка на картинку-логотип Telegram
+            test_url = "https://telegram.org/img/t_logo.png"
+            bot.send_photo(chat_id=CHAT_ID, photo=test_url, caption="Тестовая картинка")
+            return "Тестовое фото отправлено", 200
+        except Exception as e:
+            return f"<pre>{traceback.format_exc()}</pre>", 500
+
     if __name__ == "__main__":
         print("Запуск Flask...")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
