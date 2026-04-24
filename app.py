@@ -17,13 +17,23 @@ if not TOKEN or not CHAT_ID or not RSS_URL:
 
 bot = telegram.Bot(token=TOKEN)
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
 def get_random_pinterest_image(rss_url):
-    """Парсим RSS от RSS.app и возвращаем URL случайной картинки."""
-    feed = feedparser.parse(rss_url)
+    """Скачиваем RSS через requests с нормальным User-Agent и парсим."""
+    try:
+        resp = requests.get(rss_url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        raise Exception(f"Не удалось загрузить RSS-ленту: {e}")
+
+    feed = feedparser.parse(resp.content)
     images = []
 
     if not feed.entries:
-        raise Exception("RSS-лента пуста или недоступна. Проверьте ссылку.")
+        raise Exception("RSS-лента пуста или недоступна. Проверьте ссылку и авторизацию.")
 
     for entry in feed.entries:
         # Способ 1: media_content (основной для RSS.app)
@@ -32,9 +42,9 @@ def get_random_pinterest_image(rss_url):
                 url = media.get('url')
                 if url and url.startswith('http'):
                     images.append(url)
-                    break  # берём только первую картинку из media_content
+                    break
 
-        # Если в media_content не нашли — пробуем enclosures
+        # Способ 2: enclosures
         if not images and hasattr(entry, 'enclosures') and entry.enclosures:
             for enc in entry.enclosures:
                 href = enc.get('href') or enc.get('url')
@@ -42,7 +52,7 @@ def get_random_pinterest_image(rss_url):
                     images.append(href)
                     break
 
-        # Способ 3: старый поиск в description (на всякий случай)
+        # Способ 3: поиск <img src...>
         if not images and 'description' in entry:
             desc = entry.description
             start = desc.find('src="')
@@ -55,9 +65,7 @@ def get_random_pinterest_image(rss_url):
 
     if not images:
         raise Exception(
-            "Не удалось найти изображения в RSS-ленте. "
-            "Возможно, лента не содержит картинок или изменилась структура. "
-            "Проверьте RSS-ссылку."
+            "Не удалось найти изображения в RSS-ленте. Возможно, RSS.app изменил формат."
         )
     return random.choice(images)
 
