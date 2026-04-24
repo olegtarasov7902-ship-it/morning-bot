@@ -1,3 +1,25 @@
+# Диагностика перед импортами
+import sys, os, traceback
+print("--- НАЧАЛО ДИАГНОСТИКИ ---")
+print(f"Python version: {sys.version}")
+print(f"cwd: {os.getcwd()}")
+print(f"files in cwd: {os.listdir('.')}")
+
+# Проверяем переменные окружения (без раскрытия секретов)
+for var in ['BOT_TOKEN', 'GROUP_CHAT_ID', 'PINTEREST_RSS']:
+    val = os.environ.get(var)
+    print(f"{var} задан: {'Да' if val else 'НЕТ'} (длина {len(val) if val else 0})")
+
+# Проверяем импорты библиотек по очереди
+for lib in ['flask', 'telegram', 'feedparser', 'requests']:
+    try:
+        __import__(lib)
+        print(f"Библиотека '{lib}' импортирована успешно")
+    except Exception as e:
+        print(f"!!! ОШИБКА импорта '{lib}': {e}")
+        traceback.print_exc()
+
+print("--- КОНЕЦ ДИАГНОСТИКИ ---")
 import requests
 import random
 import feedparser
