@@ -47,10 +47,21 @@ def send_telegram_photo(image_url, caption):
     r.raise_for_status()
     return r.json()
 
+def clean_image_url(url):
+    """Превращает ссылки на превью Reddit в прямые ссылки на оригинал."""
+    if 'preview.redd.it' in url:
+        # Меняем домен на i.redd.it и отрезаем параметры
+        url = url.replace('preview.redd.it', 'i.redd.it')
+        if '?' in url:
+            url = url.split('?')[0]
+    return url
+
 def get_random_pinterest_image(rss_url):
     """Парсим RSS и возвращаем URL случайной картинки."""
     session = requests.Session()
-    session.headers.update(HEADERS)
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    })
     try:
         resp = session.get(rss_url, timeout=15)
         resp.raise_for_status()
@@ -64,22 +75,23 @@ def get_random_pinterest_image(rss_url):
         raise Exception("RSS-лента пуста или недоступна.")
 
     for entry in feed.entries:
+        img_url = None
         # media_content
         if hasattr(entry, 'media_content') and entry.media_content:
             for media in entry.media_content:
                 url = media.get('url')
                 if url and url.startswith('http'):
-                    images.append(url)
+                    img_url = url
                     break
         # enclosures
-        if not images and hasattr(entry, 'enclosures') and entry.enclosures:
+        if not img_url and hasattr(entry, 'enclosures') and entry.enclosures:
             for enc in entry.enclosures:
                 href = enc.get('href') or enc.get('url')
                 if href and href.startswith('http'):
-                    images.append(href)
+                    img_url = href
                     break
         # img src
-        if not images and 'description' in entry:
+        if not img_url and 'description' in entry:
             desc = entry.description
             start = desc.find('src="')
             if start != -1:
@@ -87,7 +99,10 @@ def get_random_pinterest_image(rss_url):
                 end = desc.find('"', start)
                 if end > 0:
                     img_url = desc[start:end]
-                    images.append(img_url)
+        if img_url:
+            # Чистим URL от параметров, если это preview.redd.it
+            img_url = clean_image_url(img_url)
+            images.append(img_url)
 
     if not images:
         raise Exception("Не удалось найти изображения в RSS-ленте.")
