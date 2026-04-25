@@ -154,7 +154,9 @@ def testdirect():
             return f"Ошибка Telegram: {data}", 500
     except Exception as e:
         return f"<pre>{traceback.format_exc()}</pre>", 500
-
+@app.route("/ping")
+def ping():
+    return "OK", 200
 if __name__ == "__main__":
     print("Запуск Flask...")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
