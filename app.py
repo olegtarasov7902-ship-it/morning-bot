@@ -6,10 +6,10 @@ import requests
 from flask import Flask
 import feedparser
 
-# ---------- ДИАГНОСТИКА ----------
+# ---------- ДИАГНОСТИКА (видна в логах Render) ----------
 print("--- НАЧАЛО ДИАГНОСТИКИ ---")
 print(f"Python version: {sys.version}")
-print(f"cwd: {os.getcwd()}")
+print(f"Рабочая директория: {os.getcwd()}")
 for var in ['BOT_TOKEN', 'GROUP_CHAT_ID', 'PINTEREST_RSS']:
     val = os.environ.get(var)
     print(f"{var} задан: {'Да' if val else 'НЕТ'} (длина {len(val) if val else 0})")
@@ -23,14 +23,12 @@ print("--- КОНЕЦ ДИАГНОСТИКИ ---")
 
 app = Flask(__name__)
 
+# Переменные окружения (должны быть заданы в Render)
 TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["GROUP_CHAT_ID"]
-RSS_URL = os.environ["PINTEREST_RSS"]
+RSS_URL = os.environ["PINTEREST_RSS"]   # сейчас это Reddit-лента
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
-
+# ---------- ФУНКЦИИ ДЛЯ ПРЯМОЙ ОТПРАВКИ В TELEGRAM ----------
 def send_telegram_message(text):
     """Отправка простого текста через прямой вызов API."""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -47,17 +45,17 @@ def send_telegram_photo(image_url, caption):
     r.raise_for_status()
     return r.json()
 
+# ---------- ОБРАБОТКА RSS ----------
 def clean_image_url(url):
-    """Превращает ссылки на превью Reddit в прямые ссылки на оригинал."""
+    """Превращает превью Reddit (preview.redd.it) в полноразмерное (i.redd.it) и удаляет параметры."""
     if 'preview.redd.it' in url:
-        # Меняем домен на i.redd.it и отрезаем параметры
         url = url.replace('preview.redd.it', 'i.redd.it')
         if '?' in url:
             url = url.split('?')[0]
     return url
 
 def get_random_pinterest_image(rss_url):
-    """Парсим RSS и возвращаем URL случайной картинки."""
+    """Парсит RSS и возвращает URL случайной картинки."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -76,21 +74,21 @@ def get_random_pinterest_image(rss_url):
 
     for entry in feed.entries:
         img_url = None
-        # media_content
+        # Способ 1: media_content
         if hasattr(entry, 'media_content') and entry.media_content:
             for media in entry.media_content:
                 url = media.get('url')
                 if url and url.startswith('http'):
                     img_url = url
                     break
-        # enclosures
+        # Способ 2: enclosures
         if not img_url and hasattr(entry, 'enclosures') and entry.enclosures:
             for enc in entry.enclosures:
                 href = enc.get('href') or enc.get('url')
                 if href and href.startswith('http'):
                     img_url = href
                     break
-        # img src
+        # Способ 3: поиск <img src...> в description
         if not img_url and 'description' in entry:
             desc = entry.description
             start = desc.find('src="')
@@ -100,7 +98,6 @@ def get_random_pinterest_image(rss_url):
                 if end > 0:
                     img_url = desc[start:end]
         if img_url:
-            # Чистим URL от параметров, если это preview.redd.it
             img_url = clean_image_url(img_url)
             images.append(img_url)
 
@@ -108,7 +105,7 @@ def get_random_pinterest_image(rss_url):
         raise Exception("Не удалось найти изображения в RSS-ленте.")
     return random.choice(images)
 
-# ---------- Основные маршруты ----------
+# ---------- ОСНОВНЫЕ МАРШРУТЫ ----------
 @app.route("/morning")
 def morning():
     try:
@@ -136,7 +133,7 @@ def evening():
     except Exception as e:
         return f"<pre>{traceback.format_exc()}</pre>", 500
 
-# ---------- Тестовые маршруты ----------
+# ---------- ТЕСТОВЫЕ МАРШРУТЫ ----------
 @app.route("/test")
 def test():
     try:
@@ -156,7 +153,7 @@ def testphoto():
 
 @app.route("/testdirect")
 def testdirect():
-    """Супер-прямой вызов API, идентичный ручному тесту из браузера."""
+    """Супер-прямой вызов API, идентичный ручному тесту в браузере."""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     params = {"chat_id": CHAT_ID, "text": "hello_world_direct"}
     try:
@@ -169,9 +166,13 @@ def testdirect():
             return f"Ошибка Telegram: {data}", 500
     except Exception as e:
         return f"<pre>{traceback.format_exc()}</pre>", 500
+
 @app.route("/ping")
 def ping():
+    """Служебный маршрут для пробуждения Render."""
     return "OK", 200
+
+# ---------- ЗАПУСК ----------
 if __name__ == "__main__":
     print("Запуск Flask...")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
