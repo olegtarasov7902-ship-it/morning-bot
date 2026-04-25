@@ -23,14 +23,18 @@ print("--- КОНЕЦ ДИАГНОСТИКИ ---")
 
 app = Flask(__name__)
 
-# Переменные окружения (должны быть заданы в Render)
-TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ["GROUP_CHAT_ID"]
-RSS_URL = os.environ["PINTEREST_RSS"]   # сейчас это Reddit-лента
+# ---------- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ----------
+TOKEN = os.environ["BOT_TOKEN"]           # токен Telegram-бота
+CHAT_ID = os.environ["GROUP_CHAT_ID"]     # ID вашей группы
+RSS_URL = os.environ["PINTEREST_RSS"]     # RSS-лента (сейчас Reddit r/streetwear)
+
+# ---------- ЗАЩИТА ОТ ПОВТОРОВ ----------
+recent_images = []  # список недавно отправленных URL
+MAX_RECENT = 10     # сколько последних фото исключать из выбора
 
 # ---------- ФУНКЦИИ ДЛЯ ПРЯМОЙ ОТПРАВКИ В TELEGRAM ----------
 def send_telegram_message(text):
-    """Отправка простого текста через прямой вызов API."""
+    """Отправка простого текста через Telegram API."""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     params = {"chat_id": CHAT_ID, "text": text}
     r = requests.get(url, params=params, timeout=10)
@@ -38,11 +42,15 @@ def send_telegram_message(text):
     return r.json()
 
 def send_telegram_photo(image_url, caption):
-    """Отправка фото через прямой вызов API."""
+    """Отправка фото + запоминание URL в истории для избежания повторов."""
     url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
     params = {"chat_id": CHAT_ID, "photo": image_url, "caption": caption}
     r = requests.get(url, params=params, timeout=10)
     r.raise_for_status()
+    # Сохраняем URL в истории
+    recent_images.append(image_url)
+    if len(recent_images) > MAX_RECENT:
+        recent_images.pop(0)
     return r.json()
 
 # ---------- ОБРАБОТКА RSS ----------
@@ -55,7 +63,7 @@ def clean_image_url(url):
     return url
 
 def get_random_pinterest_image(rss_url):
-    """Парсит RSS и возвращает URL случайной картинки."""
+    """Парсит RSS и возвращает URL случайной картинки, которая ещё не была в recent_images."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -88,7 +96,7 @@ def get_random_pinterest_image(rss_url):
                 if href and href.startswith('http'):
                     img_url = href
                     break
-        # Способ 3: поиск <img src...> в description
+        # Способ 3: поиск <img src...> в описании
         if not img_url and 'description' in entry:
             desc = entry.description
             start = desc.find('src="')
@@ -103,14 +111,50 @@ def get_random_pinterest_image(rss_url):
 
     if not images:
         raise Exception("Не удалось найти изображения в RSS-ленте.")
-    return random.choice(images)
 
-# ---------- ОСНОВНЫЕ МАРШРУТЫ ----------
+    # Исключаем недавно отправленные, чтобы не повторяться
+    fresh_images = [img for img in images if img not in recent_images]
+    if not fresh_images:   # если все уже были — берём любую
+        fresh_images = images
+
+    return random.choice(fresh_images)
+
+# ---------- ПОГОДА ДЛЯ КАМЫШИНА (Open-Meteo) ----------
+def get_weather_kamyshin():
+    """Актуальная погода в Камышине на момент запроса."""
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": 50.0531,
+        "longitude": 45.3761,
+        "current_weather": "true",
+        "timezone": "Europe/Moscow"
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()["current_weather"]
+        weather_codes = {
+            0: "Ясно", 1: "Малооблачно", 2: "Облачно", 3: "Пасмурно",
+            45: "Туман", 48: "Изморозь", 51: "Морось", 53: "Морось",
+            55: "Ледяная морось", 61: "Дождь", 63: "Дождь", 65: "Ливень",
+            71: "Снег", 73: "Снегопад", 75: "Сильный снег", 95: "Гроза"
+        }
+        desc = weather_codes.get(data["weathercode"], "Непонятно")
+        return f"🌤 Сейчас в Камышине: {desc}, {data['temperature']}°C\n💨 Ветер: {data['windspeed']} км/ч"
+    except Exception as e:
+        print(f"Ошибка получения погоды: {e}")
+        return None
+
+# ---------- ОСНОВНЫЕ МАРШРУТЫ С ПОГОДОЙ ----------
 @app.route("/morning")
 def morning():
     try:
         img_url = get_random_pinterest_image(RSS_URL)
-        send_telegram_photo(img_url, "Доброе утро! 🌅")
+        weather = get_weather_kamyshin()
+        caption = "Доброе утро! 🌅"
+        if weather:
+            caption += "\n\n" + weather
+        send_telegram_photo(img_url, caption)
         return "Утро отправлено", 200
     except Exception as e:
         return f"<pre>{traceback.format_exc()}</pre>", 500
@@ -119,7 +163,11 @@ def morning():
 def afternoon():
     try:
         img_url = get_random_pinterest_image(RSS_URL)
-        send_telegram_photo(img_url, "Добрый день! ☀️")
+        weather = get_weather_kamyshin()
+        caption = "Добрый день! ☀️"
+        if weather:
+            caption += "\n\n" + weather
+        send_telegram_photo(img_url, caption)
         return "День отправлен", 200
     except Exception as e:
         return f"<pre>{traceback.format_exc()}</pre>", 500
@@ -128,12 +176,16 @@ def afternoon():
 def evening():
     try:
         img_url = get_random_pinterest_image(RSS_URL)
-        send_telegram_photo(img_url, "Добрый вечер! 🌙")
+        weather = get_weather_kamyshin()
+        caption = "Добрый вечер! 🌙"
+        if weather:
+            caption += "\n\n" + weather
+        send_telegram_photo(img_url, caption)
         return "Вечер отправлен", 200
     except Exception as e:
         return f"<pre>{traceback.format_exc()}</pre>", 500
 
-# ---------- ТЕСТОВЫЕ МАРШРУТЫ ----------
+# ---------- ТЕСТОВЫЕ И СЛУЖЕБНЫЕ МАРШРУТЫ ----------
 @app.route("/test")
 def test():
     try:
@@ -153,7 +205,6 @@ def testphoto():
 
 @app.route("/testdirect")
 def testdirect():
-    """Супер-прямой вызов API, идентичный ручному тесту в браузере."""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     params = {"chat_id": CHAT_ID, "text": "hello_world_direct"}
     try:
