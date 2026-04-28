@@ -425,11 +425,11 @@ def webhook():
         w = get_weather_kamyshin()
         send_telegram_message(w if w else "Погода недоступна")
     elif text.startswith("/meme"):
-    meme_url = get_meme_url()
-    if meme_url:
-        send_telegram_photo(meme_url, "🔥 Мем дня")
-    else:
-        send_telegram_message("Мемы временно недоступны 😔")
+        meme_url = get_meme_url()
+        if meme_url:
+            send_telegram_photo(meme_url, "🔥 Мем дня")
+        else:
+            send_telegram_message("Мемы временно недоступны 😔")
     elif text.startswith("/joke"):
         joke = get_random_joke()
         send_telegram_message(joke)
