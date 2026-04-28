@@ -9,7 +9,7 @@ import feedparser
 
 app = Flask(__name__)
 
-# ---------- ДИАГНОСТИКА (видна в логах Render) ----------
+# ---------- ДИАГНОСТИКА ----------
 print("--- НАЧАЛО ДИАГНОСТИКИ ---")
 print(f"Python version: {sys.version}")
 print(f"Рабочая директория: {os.getcwd()}")
@@ -28,23 +28,21 @@ print("--- КОНЕЦ ДИАГНОСТИКИ ---")
 TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["GROUP_CHAT_ID"]
 RSS_URL = os.environ["PINTEREST_RSS"]       # RSS-лента (сейчас Reddit r/streetwear)
-APP_URL = os.environ.get("APP_URL")         # https://yourapp.onrender.com
+APP_URL = os.environ.get("APP_URL", "")     # https://yourapp.onrender.com
 
-# ---------- ЗАЩИТА ОТ ПОВТОРОВ ----------
+# ---------- ЗАЩИТА ОТ ПОВТОРОВ (для RSS) ----------
 recent_images = []
 MAX_RECENT = 10
 
-# ---------- ФУНКЦИИ ДЛЯ ОТПРАВКИ В TELEGRAM ----------
+# ---------- TELEGRAM ОТПРАВКА ----------
 def send_telegram_message(text):
-    """Отправка простого текста через Telegram API."""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     params = {"chat_id": CHAT_ID, "text": text}
     r = requests.get(url, params=params, timeout=10)
     r.raise_for_status()
     return r.json()
 
-def send_telegram_photo(image_url, caption):
-    """Отправка фото и сохранение URL в историю."""
+def send_telegram_photo(image_url, caption=""):
     url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
     params = {"chat_id": CHAT_ID, "photo": image_url, "caption": caption}
     r = requests.get(url, params=params, timeout=10)
@@ -54,7 +52,27 @@ def send_telegram_photo(image_url, caption):
         recent_images.pop(0)
     return r.json()
 
-# ---------- ОБРАБОТКА RSS ----------
+def send_telegram_animation(animation_url, caption=""):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendAnimation"
+    params = {"chat_id": CHAT_ID, "animation": animation_url, "caption": caption}
+    r = requests.get(url, params=params, timeout=10)
+    r.raise_for_status()
+    recent_images.append(animation_url)
+    if len(recent_images) > MAX_RECENT:
+        recent_images.pop(0)
+    return r.json()
+
+def send_telegram_video(video_url, caption=""):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendVideo"
+    params = {"chat_id": CHAT_ID, "video": video_url, "caption": caption}
+    r = requests.get(url, params=params, timeout=10)
+    r.raise_for_status()
+    recent_images.append(video_url)
+    if len(recent_images) > MAX_RECENT:
+        recent_images.pop(0)
+    return r.json()
+
+# ---------- RSS ОБРАБОТКА ----------
 def clean_image_url(url):
     if 'preview.redd.it' in url:
         url = url.replace('preview.redd.it', 'i.redd.it')
@@ -63,7 +81,6 @@ def clean_image_url(url):
     return url
 
 def get_random_pinterest_image(rss_url):
-    """Парсит RSS и возвращает URL случайной картинки."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -76,7 +93,6 @@ def get_random_pinterest_image(rss_url):
 
     feed = feedparser.parse(resp.content)
     images = []
-
     if not feed.entries:
         raise Exception("RSS-лента пуста или недоступна.")
 
@@ -114,9 +130,8 @@ def get_random_pinterest_image(rss_url):
         fresh_images = images
     return random.choice(fresh_images)
 
-# ---------- ПОГОДА (Open-Meteo) ----------
+# ---------- ПОГОДА ----------
 def get_weather_kamyshin():
-    """Текущая погода в Камышине."""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": 50.0531,
@@ -141,7 +156,6 @@ def get_weather_kamyshin():
         return None
 
 def get_forecast_message():
-    """Прогноз на текущий день."""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": 50.0531,
@@ -182,68 +196,134 @@ def get_forecast_message():
         print(f"Forecast error: {e}")
         return "Не могу получить прогноз 😔"
 
-# ---------- КОНТЕНТ ----------
-def get_russian_joke():
-    """Случайная шутка с r/russian_jokes."""
-    headers = {"User-Agent": "Mozilla/5.0"}
-    url = "https://www.reddit.com/r/russian_jokes/hot.json?limit=30"
-    try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        posts = resp.json()["data"]["children"]
-        if not posts:
-            return None
-        text_posts = [p for p in posts
-                      if p["data"].get("selftext", "").strip()
-                      and not p["data"].get("stickied")]
-        if not text_posts:
-            return None
-        post = random.choice(text_posts)["data"]
-        title = post["title"].strip()
-        body = post["selftext"].split("http")[0].strip()
-        return f"😄 {title}\n\n{body}"
-    except Exception as e:
-        print(f"Joke error: {e}")
-        return None
+# ---------- КОНТЕНТ: МЕМЫ, ФАКТЫ, ШУТКИ ----------
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-def get_random_fact():
-    """Случайный факт (русский, randstuff)."""
-    try:
-        resp = requests.get("https://randstuff.ru/api/fact/", timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        fact_text = data["fact"]["text"]
-        return f"📚 Факт дня:\n\n{fact_text}"
-    except Exception as e:
-        print(f"Fact error: {e}")
-        return "Не получилось загрузить факт 😢"
-
-def get_meme_url():
-    """Случайный мем с r/memes."""
-    headers = {"User-Agent": "Mozilla/5.0"}
+def get_meme_media():
+    """
+    Возвращает словарь {'type': 'photo'/'animation'/'video', 'url': ...} из r/memes.
+    При ошибке возвращает None.
+    """
     url = "https://www.reddit.com/r/memes/hot.json?limit=50"
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=HEADERS, timeout=10)
         resp.raise_for_status()
-        posts = resp.json()["data"]["children"]
-        image_urls = []
-        for p in posts:
-            data = p["data"]
-            if data.get("stickied"):
-                continue
-            img_url = data.get("url_overridden_by_dest") or data.get("url")
-            if not img_url:
-                continue
-            if any(domain in img_url for domain in ["i.redd.it", "imgur.com", "i.imgur.com"]):
-                image_urls.append(img_url)
-        if not image_urls:
-            return None
-        return random.choice(image_urls)
+        data = resp.json()
     except Exception as e:
-        print(f"Meme error: {e}")
+        print(f"Meme fetch error: {e}")
         return None
 
-# ---------- МАРШРУТЫ ПО ВРЕМЕНИ (оставлены без изменений) ----------
+    items = []
+    for post in data["data"]["children"]:
+        post_data = post["data"]
+        if post_data.get("stickied"):
+            continue
+
+        # Картинки и GIF
+        img_url = post_data.get("url_overridden_by_dest") or post_data.get("url")
+        if img_url:
+            lower = img_url.lower()
+            if any(domain in lower for domain in ["i.redd.it", "imgur.com", "i.imgur.com"]):
+                if lower.endswith('.gif'):
+                    items.append({'type': 'animation', 'url': img_url})
+                elif any(lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+                    items.append({'type': 'photo', 'url': img_url})
+                # без расширения тоже пробуем как фото
+                elif not any(lower.endswith(ext) for ext in ['.gif','.mp4','.webm']):
+                    items.append({'type': 'photo', 'url': img_url})
+
+        # Видео (Reddit hosted)
+        if post_data.get("is_video") and "media" in post_data:
+            video_data = post_data["media"].get("reddit_video")
+            if video_data and video_data.get("fallback_url"):
+                items.append({'type': 'video', 'url': video_data["fallback_url"]})
+
+    if not items:
+        return None
+    return random.choice(items)
+
+# Локальные русские факты (запас)
+LOCAL_FACTS = [
+    "Шанс родиться 29 февраля составляет примерно 1 к 1461.",
+    "В Австралии официально больше кенгуру, чем людей.",
+    "Мёд — единственная еда, которая никогда не портится.",
+    "Одиссей был первым, кто использовал «троянского коня» — буквально.",
+    "В Норвегии можно получить срок за незаконное хранение уличной мебели.",
+    "Бананы радиоактивны, но в безопасной дозе.",
+    "Самая короткая война длилась 38 минут (между Англией и Занзибаром).",
+    "Сердце синего кита настолько велико, что человек мог бы проплыть по его артериям."
+]
+
+def get_random_fact():
+    """
+    Пытается взять факт из r/funfacts.
+    При неудаче — случайный русский факт из LOCAL_FACTS.
+    """
+    url = "https://www.reddit.com/r/funfacts/hot.json?limit=50"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp.raise_for_status()
+        posts = resp.json()["data"]["children"]
+        if posts:
+            post = random.choice(posts)["data"]
+            title = post.get("title", "").strip()
+            selftext = post.get("selftext", "").strip()
+            if selftext and len(selftext) > 300:
+                selftext = selftext[:300] + "..."
+            if selftext and selftext != title:
+                return f"📚 {title}\n\n{selftext}"
+            else:
+                return f"📚 {title}"
+    except Exception as e:
+        print(f"Fact fetch error: {e}")
+    # fallback
+    return "📚 " + random.choice(LOCAL_FACTS)
+
+# Локальные русские шутки (запас)
+LOCAL_JOKES = [
+    "Купил мужик шляпу, а она ему как раз.",
+    "— Почему ты не работаешь? — Я жду обновления.",
+    "— Сынок, тебя в школе вызывали к доске? — Вызывали. — И что? — Не дозвонились",
+    "Объявление: «Требуется уборщица с чувством юмора. Смех в зале приветствуется».",
+    "Если жизнь подкинула лимон — сделай лимонад. Если жизнь подкинула asyncio — лучше смени тему.",
+    "Оптимист — это человек, который на последние деньги покупает кошелёк.",
+    "— Почему программисты не ходят в лес? — Боятся бесконечного цикла «заблудился — нашёл дорогу».",
+    "Умный в гору не пойдёт, умный гору обойдёт. А потом вызовет такси.",
+    "— Ваш кот любит спать на клавиатуре? — Нет, он предпочитает ходить по кнопке Delete.",
+    "— Доктор, у меня стресс. — А вы пробовали ничего не делать? — Пробовал, но совесть не даёт.",
+    "Настоящая дружба — это когда ты открываешь холодильник у друга и он тебе не говорит: «Ты чё пришёл?»",
+    "Самый страшный вопрос на собеседовании: «Кем вы видите себя через 5 лет?» после вопроса «Расскажите о себе».",
+    "Жизнь — как велосипед: чтобы не упасть, надо крутить педали. И лучше, если велосипед электрический.",
+    "Извините, я сегодня не в ресурсе. Мой внутренний хомяк обиделся и не хочет бежать в колесе.",
+    "— Почему ты такой грустный? — Да вот, вчера удалил Telegram, а сегодня пришлось обратно ставить.",
+]
+
+def get_reddit_joke():
+    """
+    Пытается взять шутку из r/Jokes.
+    При ошибке — случайная русская из LOCAL_JOKES.
+    """
+    url = "https://www.reddit.com/r/Jokes/hot.json?limit=50"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp.raise_for_status()
+        posts = resp.json()["data"]["children"]
+        if posts:
+            post = random.choice(posts)["data"]
+            title = post.get("title", "").strip()
+            body = post.get("selftext", "").strip()
+            if body:
+                if len(body) > 500:
+                    body = body[:500] + "..."
+                return f"😄 {title}\n\n{body}"
+            else:
+                return f"😄 {title}"
+    except Exception as e:
+        print(f"Joke fetch error: {e}")
+    # fallback
+    return "😄 " + random.choice(LOCAL_JOKES)
+
+# ---------- ОСНОВНЫЕ МАРШРУТЫ ----------
 @app.route("/morning")
 def morning():
     try:
@@ -319,10 +399,10 @@ def testdirect():
 def ping():
     return "OK", 200
 
-# ---------- WEBHOOK И ОБРАБОТКА КОМАНД ----------
+# ---------- WEBHOOK ----------
 def set_webhook():
     if not APP_URL:
-        print("⚠️ APP_URL не задан, вебхук не будет установлен")
+        print("⚠️ APP_URL не задан, вебхук не установлен")
         return
     webhook_url = f"https://api.telegram.org/bot{TOKEN}/setWebhook"
     params = {"url": f"{APP_URL}/webhook"}
@@ -335,55 +415,51 @@ def set_webhook():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json()
-    if not data:
-        return "OK", 200
-
-    if "message" not in data:
+    if not data or "message" not in data:
         return "OK", 200
 
     msg = data["message"]
     text = msg.get("text", "").strip().lower()
     chat_id = str(msg["chat"]["id"])
 
-    # Игнорируем сообщения не из нашей группы
     if chat_id != CHAT_ID:
         return "OK", 200
 
-    # Определяем команду (допустимо с указанием бота)
     if text.startswith("/forecast"):
         reply = get_forecast_message()
         send_telegram_message(reply)
-    elif text.startswith("/joke"):
-        joke = get_russian_joke()
-        if joke:
-            send_telegram_message(joke)
-        else:
-            send_telegram_message("Не удалось добыть шутку 😢")
-    elif text.startswith("/fact"):
-        fact = get_random_fact()
-        send_telegram_message(fact)
-    elif text.startswith("/meme"):
-        meme_url = get_meme_url()
-        if meme_url:
-            send_telegram_photo(meme_url, "🔥 Мем дня")
-        else:
-            send_telegram_message("Мемы закончились 😔")
     elif text.startswith("/weather"):
         w = get_weather_kamyshin()
         send_telegram_message(w if w else "Погода недоступна")
+    elif text.startswith("/meme"):
+        media = get_meme_media()
+        if not media:
+            send_telegram_message("Мемы временно недоступны 😔")
+        else:
+            caption = "🔥 Мем дня"
+            if media["type"] == "photo":
+                send_telegram_photo(media["url"], caption)
+            elif media["type"] == "animation":
+                send_telegram_animation(media["url"], caption)
+            elif media["type"] == "video":
+                send_telegram_video(media["url"], caption)
+    elif text.startswith("/joke"):
+        joke = get_reddit_joke()
+        send_telegram_message(joke)
+    elif text.startswith("/fact"):
+        fact = get_random_fact()
+        send_telegram_message(fact)
     elif text.startswith("/start") or text.startswith("/help"):
         help_text = (
             "👋 Я бот-компаньон. Что умею:\n"
-            "/forecast – прогноз на сегодня (дождь, снег, ветер)\n"
-            "/joke – случайная русская шутка с Reddit\n"
-            "/fact – интересный факт\n"
-            "/meme – свежий мем (картинка)\n"
+            "/forecast – прогноз на сегодня\n"
             "/weather – текущая погода\n"
-            "Каждое утро/день/вечер присылаю подборку автоматически."
+            "/meme – свежий мем (картинка/гиф/видео)\n"
+            "/joke – случайная шутка (Reddit/русский архив)\n"
+            "/fact – интересный факт\n"
+            "Утро/день/вечер – автоматическая рассылка с погодой."
         )
         send_telegram_message(help_text)
-    # Неизвестные команды игнорируем
-
     return "OK", 200
 
 # ---------- ЗАПУСК ----------
